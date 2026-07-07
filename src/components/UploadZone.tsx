@@ -66,9 +66,9 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       return;
     }
 
-    const maxSize = 50 * 1024 * 1024; // 50MB
+    const maxSize = 200 * 1024 * 1024; // 200MB
     if (file.size > maxSize) {
-      setError('ไฟล์มีขนาดใหญ่เกินไป จำกัดขนาดไม่เกิน 50MB');
+      setError('ไฟล์มีขนาดใหญ่เกินไป จำกัดขนาดไม่เกิน 200MB');
       return;
     }
 
@@ -593,7 +593,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
             <div className="pt-4 flex items-center justify-center gap-6 text-xs text-slate-400">
               <span>รองรับเฉพาะ .pdf</span>
               <span className="w-1 h-1 bg-slate-300 rounded-full" />
-              <span>ขนาดไฟล์ไม่เกิน 50MB</span>
+              <span>ขนาดไฟล์ไม่เกิน 200MB</span>
             </div>
           </div>
         </div>
