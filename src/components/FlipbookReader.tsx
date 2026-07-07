@@ -447,10 +447,6 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                               pageNumber={leftPageNum} 
                             />
                           </div>
-                          {/* Page Number footer */}
-                          <div className="text-center text-[10px] text-slate-400 font-mono py-1 select-none">
-                            {leftPageNum}
-                          </div>
                         </div>
                       ) : (
                         /* Empty side for front cover */
@@ -474,10 +470,6 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                             pdfDoc={pdfDoc} 
                             pageNumber={rightPageNum} 
                           />
-                        </div>
-                        {/* Page Number footer */}
-                        <div className="text-center text-[10px] text-slate-400 font-mono py-1 select-none">
-                          {rightPageNum}
                         </div>
                       </div>
                     ) : (
