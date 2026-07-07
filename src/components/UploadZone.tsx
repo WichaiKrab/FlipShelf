@@ -1,8 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, Image as ImageIcon, Save, ArrowLeft, BookOpen } from 'lucide-react';
-import { collection, setDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage, getNextBookId, getAbsoluteUrl } from '../lib/firebase';
+import { storage, getAbsoluteUrl } from '../lib/firebase';
 import { Ebook } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 import { saveLocalFile } from '../lib/localFileDb';
@@ -254,16 +253,34 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
 
       let savedId = '';
       try {
-        const nextSeqId = await getNextBookId();
-        await setDoc(doc(db, 'ebooks', nextSeqId), {
-          ...ebookData,
-          createdAt: serverTimestamp()
+        // Fetch the next seq ID from our server API
+        const nextSeqResponse = await fetch(getAbsoluteUrl('/api/ebooks/next-id'));
+        if (!nextSeqResponse.ok) throw new Error('Failed to fetch next sequential book ID');
+        const nextSeqData = await nextSeqResponse.json();
+        const nextSeqId = nextSeqData.nextId;
+
+        // Save book to our backend API
+        const saveResponse = await fetch(getAbsoluteUrl('/api/ebooks'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: nextSeqId,
+            ...ebookData,
+          }),
         });
+        
+        if (!saveResponse.ok) {
+          const errData = await saveResponse.json();
+          throw new Error(errData.error || 'Server error saving ebook');
+        }
+        
         savedId = nextSeqId;
-        console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
-      } catch (firestoreErr: any) {
-        console.error('Auto-save to Firestore failed:', firestoreErr);
-        throw new Error(`ไม่สามารถบันทึกข้อมูล E-Book ลงฐานข้อมูลคลาวด์ได้: ${firestoreErr.message || firestoreErr}`);
+        console.log('Auto-saved to Database via server API with custom sequential ID:', savedId);
+      } catch (dbErr: any) {
+        console.error('Auto-save via server API failed:', dbErr);
+        throw new Error(`ไม่สามารถบันทึกข้อมูล E-Book ลงฐานข้อมูลได้: ${dbErr.message || dbErr}`);
       }
 
       setMetadataTitle(defaultTitle);
@@ -327,11 +344,18 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           localStorage.setItem('local_ebooks', JSON.stringify(updatedBooks));
         }
       } else {
-        // Update in Firestore
-        const bookRef = doc(db, 'ebooks', processedBook.id);
-        await updateDoc(bookRef, {
-          ...updatedData
+        // Update via server API
+        const updateResponse = await fetch(getAbsoluteUrl(`/api/ebooks/${processedBook.id}`), {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updatedData),
         });
+        if (!updateResponse.ok) {
+          const errData = await updateResponse.json();
+          throw new Error(errData.error || 'Server error updating ebook');
+        }
       }
 
       setProgress(100);

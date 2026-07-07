@@ -22,8 +22,7 @@ import {
   X,
   Sparkles
 } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
-import { db, getNextBookId } from '../lib/firebase';
+import { getAbsoluteUrl } from '../lib/firebase';
 import { Ebook } from '../types';
 import UploadZone from './UploadZone';
 
@@ -83,78 +82,62 @@ export default function AdminDashboard({ onOpenBook }: AdminDashboardProps) {
   const [newFileSize, setNewFileSize] = useState('1.5 MB');
   const [isCreatingManual, setIsCreatingManual] = useState(false);
 
-  // Subscribe to all books (including drafts) in real-time
+  // Load ebooks from backend API and combine with local storage
+  const fetchAdminEbooks = async () => {
+    try {
+      const response = await fetch(getAbsoluteUrl('/api/ebooks'));
+      if (!response.ok) {
+        throw new Error(`Server returned error status: ${response.status}`);
+      }
+      const serverBooks: Ebook[] = await response.json();
+
+      // Merge local ebooks from localStorage
+      let localBooks: Ebook[] = [];
+      try {
+        const localBooksStr = localStorage.getItem('local_ebooks');
+        if (localBooksStr) {
+          localBooks = JSON.parse(localBooksStr);
+        }
+      } catch (e) {
+        console.error('Error parsing local books:', e);
+      }
+
+      const combined = [...serverBooks];
+      localBooks.forEach((lb) => {
+        if (!combined.some((b) => b.id === lb.id)) {
+          combined.push(lb);
+        }
+      });
+
+      // Sort combined books by uploadedAt desc
+      combined.sort((a, b) => b.uploadedAt - a.uploadedAt);
+      setEbooks(combined);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to fetch ebooks from backend, falling back to local only:', error);
+      
+      // Fallback to only local ebooks
+      let localBooks: Ebook[] = [];
+      try {
+        const localBooksStr = localStorage.getItem('local_ebooks');
+        if (localBooksStr) {
+          localBooks = JSON.parse(localBooksStr);
+        }
+      } catch (e) {
+        console.error('Error parsing local books:', e);
+      }
+      localBooks.sort((a, b) => b.uploadedAt - a.uploadedAt);
+      setEbooks(localBooks);
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    const ebooksRef = collection(db, 'ebooks');
-    const q = query(ebooksRef, orderBy('uploadedAt', 'desc'));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const books: Ebook[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          books.push({
-            id: doc.id,
-            name: data.name,
-            pdfUrl: data.pdfUrl,
-            coverUrl: data.coverUrl,
-            totalPages: data.totalPages,
-            uploadedAt: data.uploadedAt || Date.now(),
-            status: data.status || 'ready',
-            publishStatus: data.publishStatus || 'published',
-            description: data.description || '',
-            category: data.category || 'ทั่วไป',
-            fileSize: data.fileSize,
-          });
-        });
-
-        // Merge local ebooks from localStorage
-        let localBooks: Ebook[] = [];
-        try {
-          const localBooksStr = localStorage.getItem('local_ebooks');
-          if (localBooksStr) {
-            localBooks = JSON.parse(localBooksStr);
-          }
-        } catch (e) {
-          console.error('Error parsing local books:', e);
-        }
-
-        const combined = [...books];
-        localBooks.forEach((lb) => {
-          if (!combined.some((b) => b.id === lb.id)) {
-            combined.push(lb);
-          }
-        });
-
-        // Sort combined books by uploadedAt desc
-        combined.sort((a, b) => b.uploadedAt - a.uploadedAt);
-
-        setEbooks(combined);
-        setLoading(false);
-      },
-      (error) => {
-        console.error('Firestore admin sub error, fallback to local storage:', error);
-        
-        // Fallback to only local ebooks
-        let localBooks: Ebook[] = [];
-        try {
-          const localBooksStr = localStorage.getItem('local_ebooks');
-          if (localBooksStr) {
-            localBooks = JSON.parse(localBooksStr);
-          }
-        } catch (e) {
-          console.error('Error parsing local books:', e);
-        }
-        localBooks.sort((a, b) => b.uploadedAt - a.uploadedAt);
-        setEbooks(localBooks);
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
+    fetchAdminEbooks();
+    // Poll every 5 seconds for backend updates
+    const interval = setInterval(fetchAdminEbooks, 5000);
+    return () => clearInterval(interval);
   }, [isAuthenticated]);
 
   // Handle simple credentials login
@@ -222,15 +205,24 @@ export default function AdminDashboard({ onOpenBook }: AdminDashboardProps) {
           localStorage.setItem('local_ebooks', JSON.stringify(updated));
         }
       } else {
-        // Update in Firestore
-        const bookRef = doc(db, 'ebooks', editingBook.id);
-        await updateDoc(bookRef, {
-          name: editTitle.trim(),
-          description: editDesc.trim(),
-          category: editCategory,
-          publishStatus: editStatus,
-          coverUrl: editCover || null,
+        // Update via server API
+        const updateResponse = await fetch(getAbsoluteUrl(`/api/ebooks/${editingBook.id}`), {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: editTitle.trim(),
+            description: editDesc.trim(),
+            category: editCategory,
+            publishStatus: editStatus,
+            coverUrl: editCover || undefined,
+          }),
         });
+        if (!updateResponse.ok) {
+          const errData = await updateResponse.json();
+          throw new Error(errData.error || 'Failed to update ebook via server API');
+        }
       }
 
       // Update in local state to force direct feedback
@@ -273,7 +265,12 @@ export default function AdminDashboard({ onOpenBook }: AdminDashboardProps) {
       onConfirm: async () => {
         try {
           if (!id.startsWith('local-')) {
-            await deleteDoc(doc(db, 'ebooks', id));
+            const deleteResponse = await fetch(getAbsoluteUrl(`/api/ebooks/${id}`), {
+              method: 'DELETE',
+            });
+            if (!deleteResponse.ok) {
+              throw new Error('Failed to delete book from server database');
+            }
           }
         } catch (err) {
           console.error('Error deleting book:', err);
@@ -332,15 +329,32 @@ export default function AdminDashboard({ onOpenBook }: AdminDashboardProps) {
       let isLocal = false;
 
       try {
-        const { serverTimestamp } = await import('firebase/firestore');
-        const nextSeqId = await getNextBookId();
-        await setDoc(doc(db, 'ebooks', nextSeqId), {
-          ...ebookData,
-          createdAt: serverTimestamp()
+        // Fetch the next seq ID from our server API
+        const nextSeqResponse = await fetch(getAbsoluteUrl('/api/ebooks/next-id'));
+        if (!nextSeqResponse.ok) throw new Error('Failed to fetch next sequential book ID');
+        const nextSeqData = await nextSeqResponse.json();
+        const nextSeqId = nextSeqData.nextId;
+
+        // Save book to our backend API
+        const saveResponse = await fetch(getAbsoluteUrl('/api/ebooks'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            id: nextSeqId,
+            ...ebookData,
+          }),
         });
+        
+        if (!saveResponse.ok) {
+          const errData = await saveResponse.json();
+          throw new Error(errData.error || 'Server error saving ebook');
+        }
+
         savedId = nextSeqId;
-      } catch (firestoreErr) {
-        console.error('Firestore manual create error, fallback to local:', firestoreErr);
+      } catch (dbErr) {
+        console.error('Database manual create error, fallback to local:', dbErr);
         isLocal = true;
 
         const localBooksStr = localStorage.getItem('local_ebooks');
