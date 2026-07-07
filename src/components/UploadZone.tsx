@@ -108,49 +108,54 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       setProgress(40);
       setStatusText('กำลังอัปโหลดไฟล์ไปยังคลาวด์...');
 
-      // Let's attempt upload to Firebase Storage
+      // Upload file to backend server upload proxy to bypass browser-side CORS blocks
       let finalPdfUrl = localPdfUrl;
       const fileId = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9]/g, '_')}`;
-      const storageRef = ref(storage, `ebooks/${fileId}.pdf`);
 
       try {
-        const uploadTask = uploadBytesResumable(storageRef, file);
-        activeUploadTaskRef.current = uploadTask;
-        setCanSkip(true);
-        
-        await new Promise<void>((resolve, reject) => {
-          // Set a 120-second automatic timeout (generous for larger PDFs)
-          const timeoutId = setTimeout(() => {
-            console.warn('Firebase Storage upload timed out after 120 seconds. Cancelling upload task...');
-            uploadTask.cancel();
-            reject(new Error('การเชื่อมต่อกับ Firebase Storage หมดเวลา กำลังสลับไปใช้ Local Session เพื่อความรวดเร็ว'));
-          }, 120000);
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('fileId', fileId);
 
-          uploadTask.on(
-            'state_changed',
-            (snapshot) => {
-              const uploadProgress = (snapshot.bytesTransferred / snapshot.totalBytes) * 45; // takes up 45% of total progress bar
-              setProgress(Math.round(40 + uploadProgress));
-              setStatusText(`กำลังอัปโหลดไฟล์ PDF: ${Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)}%`);
-            },
-            (err) => {
-              clearTimeout(timeoutId);
-              console.warn('Firebase Storage upload warning:', err);
-              reject(err);
-            },
-            async () => {
-              clearTimeout(timeoutId);
-              try {
-                finalPdfUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve();
-              } catch (urlErr) {
-                reject(urlErr);
-              }
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/upload', true);
+
+          // Track upload progress on progress bar (takes up 45% of the bar)
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const uploadPercent = (event.loaded / event.total) * 45;
+              setProgress(Math.round(40 + uploadPercent));
+              setStatusText(`กำลังส่งข้อมูลไฟล์ไปยังเซิร์ฟเวอร์: ${Math.round((event.loaded / event.total) * 100)}%`);
             }
-          );
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                if (response.success && response.url) {
+                  finalPdfUrl = response.url;
+                  resolve();
+                } else {
+                  reject(new Error(response.error || 'Server returned upload failure status'));
+                }
+              } catch (e) {
+                reject(new Error('Failed to parse upload server response'));
+              }
+            } else {
+              reject(new Error(`Server error: ${xhr.status} ${xhr.statusText}`));
+            }
+          };
+
+          xhr.onerror = () => {
+            reject(new Error('Network connection error during file upload'));
+          };
+
+          xhr.send(formData);
         });
       } catch (storageErr: any) {
-        console.warn('Falling back to local session URL due to Firebase Storage constraints:', storageErr);
+        console.warn('Backend cloud upload failed, falling back to local storage:', storageErr);
         try {
           await saveLocalFile(fileId, file);
           finalPdfUrl = `local-file://${fileId}`;
@@ -158,12 +163,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
           finalPdfUrl = localPdfUrl;
         }
-        setError(storageErr?.message?.includes('หมดเวลา') 
-          ? 'หมายเหตุ: อัปโหลดล่าช้า ระบบทำการบันทึกแบบ Local ให้คุณเข้าอ่านได้ทันทีบนเบราว์เซอร์นี้!' 
-          : 'หมายเหตุ: ระบบสลับไปบันทึกแบบ Local ให้คุณเข้าอ่านได้ทันทีบนเบราว์เซอร์นี้!');
-      } finally {
-        activeUploadTaskRef.current = null;
-        setCanSkip(false);
+        setError('หมายเหตุ: การอัปโหลดไปยังระบบคลาวด์ติดขัดเนื่องจากนโยบายเบราว์เซอร์ ระบบได้บันทึกไฟล์แบบ Local เพื่อให้ใช้งานได้ทันทีบนเครื่องนี้!');
       }
 
       setProgress(90);

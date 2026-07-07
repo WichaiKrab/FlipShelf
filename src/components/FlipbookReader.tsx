@@ -83,7 +83,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
       try {
         let pdf;
         const isLocalFile = ebook.pdfUrl.startsWith('local-file://');
-        const isFirebaseStorage = !isLocalFile && (ebook.pdfUrl.includes('firebasestorage.googleapis.com') || ebook.pdfUrl.startsWith('gs://'));
+        const isRelative = ebook.pdfUrl.startsWith('/') || ebook.pdfUrl.startsWith('.');
 
         if (isLocalFile) {
           try {
@@ -101,55 +101,53 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
             console.error('IndexedDB load failed:', dbErr);
             throw dbErr;
           }
-        } else if (isFirebaseStorage) {
+        } else if (isRelative) {
           try {
-            console.log('Loading PDF from Firebase Storage via SDK getBlob...');
-            const fileRef = storageRef(storage, ebook.pdfUrl);
-            const blob = await getBlob(fileRef);
-            const arrayBuffer = await blob.arrayBuffer();
-            const uint8Array = new Uint8Array(arrayBuffer);
-            const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
-            pdf = await loadingTask.promise;
-          } catch (sdkErr) {
-            console.error('Firebase Storage SDK load failed, falling back to direct load/proxy:', sdkErr);
-          }
-        }
-
-        if (!pdf && !isLocalFile) {
-          try {
-            // Attempt 1: Direct load
+            console.log('Loading PDF from relative server path:', ebook.pdfUrl);
             const loadingTask = pdfjsLib.getDocument({ url: ebook.pdfUrl });
             pdf = await loadingTask.promise;
-          } catch (directErr) {
-            console.warn('Direct PDF load failed, trying local Backend PDF Proxy:', directErr);
-            if (ebook.pdfUrl.startsWith('http')) {
+          } catch (relativeErr) {
+            console.error('Relative PDF load failed:', relativeErr);
+            throw relativeErr;
+          }
+        } else {
+          console.log('Loading external PDF URL:', ebook.pdfUrl);
+          
+          // Strategy 1: Local Server PDF Proxy (Bypasses CORS entirely on server side)
+          try {
+            console.log('Strategy 1: Trying local Backend PDF Proxy...');
+            const proxyUrl = `/api/pdf-proxy?url=${encodeURIComponent(ebook.pdfUrl)}`;
+            const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
+            pdf = await loadingTask.promise;
+          } catch (proxyErr) {
+            console.warn('Backend PDF Proxy failed, trying direct browser load as Strategy 2:', proxyErr);
+            
+            // Strategy 2: Direct load from browser (might get blocked by CORS)
+            try {
+              console.log('Strategy 2: Trying direct browser load...');
+              const loadingTask = pdfjsLib.getDocument({ url: ebook.pdfUrl });
+              pdf = await loadingTask.promise;
+            } catch (directErr) {
+              console.warn('Direct PDF load failed, trying public CORS proxy 1:', directErr);
+              
+              // Strategy 3: public CORS proxy (corsproxy.io)
               try {
-                // Attempt 2: Local Server PDF Proxy (100% reliable backend streaming)
-                const proxyUrl = `/api/pdf-proxy?url=${encodeURIComponent(ebook.pdfUrl)}`;
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(ebook.pdfUrl)}`;
                 const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
                 pdf = await loadingTask.promise;
-              } catch (localProxyErr) {
-                console.warn('Local Server PDF Proxy failed, trying CORS proxy 1 (corsproxy.io):', localProxyErr);
+              } catch (proxy1Err) {
+                console.warn('Public CORS proxy 1 failed, trying public CORS proxy 2 (allorigins):', proxy1Err);
+                
+                // Strategy 4: public CORS proxy 2 (allorigins)
                 try {
-                  // Attempt 3: CORS proxy 1 (corsproxy.io)
-                  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(ebook.pdfUrl)}`;
+                  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(ebook.pdfUrl)}`;
                   const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
                   pdf = await loadingTask.promise;
-                } catch (proxy1Err) {
-                  console.warn('CORS proxy 1 failed, trying CORS proxy 2 (allorigins):', proxy1Err);
-                  try {
-                    // Attempt 4: CORS proxy 2 (allorigins)
-                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(ebook.pdfUrl)}`;
-                    const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
-                    pdf = await loadingTask.promise;
-                  } catch (proxy2Err) {
-                    console.error('All PDF loading strategies failed:', proxy2Err);
-                    throw proxy2Err;
-                  }
+                } catch (proxy2Err) {
+                  console.error('All PDF loading strategies failed:', proxy2Err);
+                  throw new Error('ไม่สามารถโหลดเอกสาร PDF ได้เนื่องจากนโยบายความปลอดภัย (CORS) ของเบราว์เซอร์หรือเครือข่าย');
                 }
               }
-            } else {
-              throw directErr;
             }
           }
         }
