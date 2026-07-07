@@ -80,7 +80,9 @@ async function startServer() {
           const fileRef = ref(firebaseStorage, `ebooks/${filename}`);
           
           const fileBuffer = fs.readFileSync(req.file.path);
-          const uploadResult = await uploadBytes(fileRef, fileBuffer, {
+          // Convert Buffer to Uint8Array which is standard and universally supported by Firebase Web SDK uploadBytes
+          const fileUint8 = new Uint8Array(fileBuffer);
+          const uploadResult = await uploadBytes(fileRef, fileUint8, {
             contentType: 'application/pdf',
           });
           
@@ -102,29 +104,12 @@ async function startServer() {
           });
           return;
         } catch (firebaseErr: any) {
-          console.error('[Server] Server-side Firebase upload failed, falling back to local disk:', firebaseErr);
+          console.error('[Server] Server-side Firebase upload failed:', firebaseErr);
+          throw new Error(`ไม่สามารถอัปโหลดไฟล์ขึ้น Firebase Storage ได้: ${firebaseErr.message || firebaseErr}`);
         }
+      } else {
+        throw new Error('ไม่พบการตั้งค่าคอนฟิกูเรชัน Firebase บนเซิร์ฟเวอร์ กรุณาตรวจสอบไฟล์ firebase-applet-config.json');
       }
-
-      // 2. Fallback to Local Ephemeral Server Storage (/tmp/uploads)
-      console.log(`[Server] Saving to local disk fallback (/tmp/uploads/${filename})...`);
-      const finalLocalPath = path.join(uploadsDir, filename);
-      
-      // Rename the temporary multer file to the final destination name
-      if (req.file.path !== finalLocalPath) {
-        if (fs.existsSync(finalLocalPath)) {
-          fs.unlinkSync(finalLocalPath);
-        }
-        fs.renameSync(req.file.path, finalLocalPath);
-      }
-
-      const localUrl = `/api/uploads/${filename}`;
-      res.json({
-        success: true,
-        url: localUrl,
-        fileId,
-        storageType: 'local'
-      });
     } catch (err: any) {
       console.error('[Server] Upload handler error:', err);
       // Clean up the multer temp file if it exists and wasn't renamed or deleted
@@ -133,7 +118,7 @@ async function startServer() {
           fs.unlinkSync(req.file.path);
         } catch (e) {}
       }
-      res.status(500).json({ error: `Internal Server Error: ${err.message}` });
+      res.status(500).json({ error: err.message || 'Internal Server Error' });
     }
   });
 

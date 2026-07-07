@@ -144,7 +144,12 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
                 reject(new Error('Failed to parse upload server response'));
               }
             } else {
-              reject(new Error(`Server error: ${xhr.status} ${xhr.statusText}`));
+              try {
+                const response = JSON.parse(xhr.responseText);
+                reject(new Error(response.error || `Server error: ${xhr.status} ${xhr.statusText}`));
+              } catch (e) {
+                reject(new Error(`Server error: ${xhr.status} ${xhr.statusText}`));
+              }
             }
           };
 
