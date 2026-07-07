@@ -2,18 +2,13 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import multer from 'multer';
-import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import { initializeApp } from 'firebase/app';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { initDatabase, getAllEbooks, getNextServerBookId, saveEbook, updateEbook, deleteEbook } from './src/lib/serverDb';
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
-
-  // Use JSON middleware to parse incoming POST/PUT requests
-  app.use(express.json({ limit: '50mb' }));
 
   // Initialize server-side Firebase App to bypass browser CORS on uploads
   let serverFirebaseApp: any;
@@ -41,24 +36,11 @@ async function startServer() {
     console.error('[Server] Failed to initialize server-side Firebase Storage:', err);
   }
 
-  // Initialize server-side unified database (PostgreSQL/Firestore/Local JSON fallback)
-  try {
-    const dbType = await initDatabase(serverFirebaseApp);
-    console.log(`[Server] Storage Database initialized with mode: ${dbType}`);
-  } catch (dbErr) {
-    console.error('[Server] Failed to initialize database:', dbErr);
-  }
-
-  const uploadsDir = path.join('/tmp', 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
-
-  // Multer configuration for disk-based uploads to save server memory
+  // Multer configuration for memory storage uploads
   const upload = multer({
-    dest: uploadsDir,
+    storage: multer.memoryStorage(),
     limits: {
-      fileSize: 200 * 1024 * 1024, // 200MB limit
+      fileSize: 50 * 1024 * 1024, // 50MB limit
     }
   });
 
@@ -68,8 +50,12 @@ async function startServer() {
     next();
   });
 
-  // Enable simple CORS configuration for API endpoints with preflight support
-  app.use(cors());
+  // Enable simple CORS configuration for API endpoints
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
+    next();
+  });
 
   // Server-side Upload API (Bypasses browser CORS policy for Firebase Storage uploads)
   app.post('/api/upload', upload.single('file'), async (req, res) => {
@@ -88,22 +74,12 @@ async function startServer() {
           console.log(`[Server] Uploading ${req.file.originalname} to Firebase Storage as ebooks/${filename}...`);
           const fileRef = ref(firebaseStorage, `ebooks/${filename}`);
           
-          const fileBuffer = fs.readFileSync(req.file.path);
-          // Convert Buffer to Uint8Array which is standard and universally supported by Firebase Web SDK uploadBytes
-          const fileUint8 = new Uint8Array(fileBuffer);
-          const uploadResult = await uploadBytes(fileRef, fileUint8, {
+          const uploadResult = await uploadBytes(fileRef, req.file.buffer, {
             contentType: 'application/pdf',
           });
           
           const downloadUrl = await getDownloadURL(uploadResult.ref);
           console.log(`[Server] Firebase upload complete: ${downloadUrl}`);
-          
-          // Clean up the temporary file
-          try {
-            fs.unlinkSync(req.file.path);
-          } catch (cleanupErr) {
-            console.warn('[Server] Failed to clean up temporary file:', cleanupErr);
-          }
           
           res.json({
             success: true,
@@ -113,21 +89,30 @@ async function startServer() {
           });
           return;
         } catch (firebaseErr: any) {
-          console.error('[Server] Server-side Firebase upload failed:', firebaseErr);
-          throw new Error(`ไม่สามารถอัปโหลดไฟล์ขึ้น Firebase Storage ได้: ${firebaseErr.message || firebaseErr}`);
+          console.error('[Server] Server-side Firebase upload failed, falling back to local disk:', firebaseErr);
         }
-      } else {
-        throw new Error('ไม่พบการตั้งค่าคอนฟิกูเรชัน Firebase บนเซิร์ฟเวอร์ กรุณาตรวจสอบไฟล์ firebase-applet-config.json');
       }
+
+      // 2. Fallback to Local Ephemeral Server Storage (/tmp/uploads)
+      console.log(`[Server] Saving to local disk fallback (/tmp/uploads/${filename})...`);
+      const uploadsDir = path.join('/tmp', 'uploads');
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      const localPath = path.join(uploadsDir, filename);
+      fs.writeFileSync(localPath, req.file.buffer);
+
+      const localUrl = `/api/uploads/${filename}`;
+      res.json({
+        success: true,
+        url: localUrl,
+        fileId,
+        storageType: 'local'
+      });
     } catch (err: any) {
       console.error('[Server] Upload handler error:', err);
-      // Clean up the multer temp file if it exists and wasn't renamed or deleted
-      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
-        try {
-          fs.unlinkSync(req.file.path);
-        } catch (e) {}
-      }
-      res.status(500).json({ error: err.message || 'Internal Server Error' });
+      res.status(500).json({ error: `Internal Server Error: ${err.message}` });
     }
   });
 
@@ -185,65 +170,6 @@ async function startServer() {
     } catch (err: any) {
       console.error(`[Proxy] Error proxying resource:`, err);
       res.status(500).send(`Error proxying document content: ${err.message}`);
-    }
-  });
-
-  // Unified Database API Endpoints (Abstracts PostgreSQL / Firestore / Local Storage)
-  app.get('/api/ebooks', async (req, res) => {
-    try {
-      const ebooks = await getAllEbooks();
-      res.json(ebooks);
-    } catch (err: any) {
-      console.error('[API] GET /api/ebooks failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to retrieve ebooks' });
-    }
-  });
-
-  app.get('/api/ebooks/next-id', async (req, res) => {
-    try {
-      const nextId = await getNextServerBookId();
-      res.json({ nextId });
-    } catch (err: any) {
-      console.error('[API] GET /api/ebooks/next-id failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to generate next book ID' });
-    }
-  });
-
-  app.post('/api/ebooks', async (req, res) => {
-    try {
-      const ebookData = req.body;
-      if (!ebookData.id || !ebookData.name || !ebookData.pdfUrl) {
-        res.status(400).json({ error: 'Missing required ebook fields (id, name, pdfUrl)' });
-        return;
-      }
-      await saveEbook(ebookData);
-      res.status(201).json({ success: true, ebook: ebookData });
-    } catch (err: any) {
-      console.error('[API] POST /api/ebooks failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to save ebook' });
-    }
-  });
-
-  app.put('/api/ebooks/:id', async (req, res) => {
-    try {
-      const id = req.params.id;
-      const updatedData = req.body;
-      await updateEbook(id, updatedData);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error('[API] PUT /api/ebooks failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to update ebook' });
-    }
-  });
-
-  app.delete('/api/ebooks/:id', async (req, res) => {
-    try {
-      const id = req.params.id;
-      await deleteEbook(id);
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error('[API] DELETE /api/ebooks failed:', err);
-      res.status(500).json({ error: err.message || 'Failed to delete ebook' });
     }
   });
 

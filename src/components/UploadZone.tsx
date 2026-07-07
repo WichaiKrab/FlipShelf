@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, Image as ImageIcon, Save, ArrowLeft, BookOpen } from 'lucide-react';
+import { collection, setDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { storage, getAbsoluteUrl } from '../lib/firebase';
+import { db, storage, getNextBookId } from '../lib/firebase';
 import { Ebook } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 import { saveLocalFile } from '../lib/localFileDb';
@@ -65,9 +66,9 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       return;
     }
 
-    const maxSize = 200 * 1024 * 1024; // 200MB
+    const maxSize = 50 * 1024 * 1024; // 50MB
     if (file.size > maxSize) {
-      setError('ไฟล์มีขนาดใหญ่เกินไป จำกัดขนาดไม่เกิน 200MB');
+      setError('ไฟล์มีขนาดใหญ่เกินไป จำกัดขนาดไม่เกิน 50MB');
       return;
     }
 
@@ -118,7 +119,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.open('POST', getAbsoluteUrl('/api/upload'), true);
+          xhr.open('POST', '/api/upload', true);
 
           // Track upload progress on progress bar (takes up 45% of the bar)
           xhr.upload.onprogress = (event) => {
@@ -134,7 +135,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
               try {
                 const response = JSON.parse(xhr.responseText);
                 if (response.success && response.url) {
-                  finalPdfUrl = getAbsoluteUrl(response.url);
+                  finalPdfUrl = response.url;
                   resolve();
                 } else {
                   reject(new Error(response.error || 'Server returned upload failure status'));
@@ -143,12 +144,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
                 reject(new Error('Failed to parse upload server response'));
               }
             } else {
-              try {
-                const response = JSON.parse(xhr.responseText);
-                reject(new Error(response.error || `Server error: ${xhr.status} ${xhr.statusText}`));
-              } catch (e) {
-                reject(new Error(`Server error: ${xhr.status} ${xhr.statusText}`));
-              }
+              reject(new Error(`Server error: ${xhr.status} ${xhr.statusText}`));
             }
           };
 
@@ -158,77 +154,16 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
 
           xhr.send(formData);
         });
-      } catch (serverUploadErr: any) {
-        console.warn('Backend server-side upload failed, attempting direct client-side Firebase Storage upload:', serverUploadErr);
-        
+      } catch (storageErr: any) {
+        console.warn('Backend cloud upload failed, falling back to local storage:', storageErr);
         try {
-          setStatusText('เซิร์ฟเวอร์หลังบ้านติดขัด กำลังอัปโหลดตรงไปยังคลาวด์...');
-          const storageReference = ref(storage, `ebooks/${fileId}.pdf`);
-          const uploadTask = uploadBytesResumable(storageReference, file, {
-            contentType: 'application/pdf',
-          });
-          
-          activeUploadTaskRef.current = uploadTask;
-          setCanSkip(true);
-
-          await new Promise<void>((resolve, reject) => {
-            uploadTask.on(
-              'state_changed',
-              (snapshot) => {
-                const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 45;
-                setProgress(Math.round(40 + pct));
-                setStatusText(`กำลังอัปโหลดไปยังระบบคลาวด์ตรง: ${Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)}%`);
-              },
-              (err) => {
-                reject(err);
-              },
-              async () => {
-                try {
-                  const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                  finalPdfUrl = downloadUrl;
-                  resolve();
-                } catch (urlErr) {
-                  reject(urlErr);
-                }
-              }
-            );
-          });
-          setCanSkip(false);
-          activeUploadTaskRef.current = null;
-        } catch (clientStorageErr: any) {
-          console.error('Direct client-side Firebase Storage upload also failed:', clientStorageErr);
-          setCanSkip(false);
-          activeUploadTaskRef.current = null;
-          
-          const isCorsError = clientStorageErr?.message?.includes('CORS') || 
-                              clientStorageErr?.code?.includes('storage/unknown') || 
-                              clientStorageErr?.code?.includes('storage/retry-limit-exceeded') ||
-                              String(clientStorageErr).includes('CORS') ||
-                              String(clientStorageErr).includes('Network Error') ||
-                              String(clientStorageErr).includes('ERR_FAILED');
-
-          if (isCorsError) {
-            throw new Error(
-              `ล้มเหลวเนื่องจาก 'ข้อจำกัดนโยบายความปลอดภัย CORS' ของ Firebase Storage\n\n` +
-              `เมื่อแอปพลิเคชันรันบนสภาวะแวดล้อมภายนอก (เช่น Vercel หรือ Netlify) ที่ไม่มีเซิร์ฟเวอร์หลังบ้าน (Backend) คอยช่วยทำ Proxy\n` +
-              `ระบบจำเป็นต้องอัปโหลดขึ้นคลาวด์ตรงผ่านเบราว์เซอร์ ซึ่ง Firebase Storage บล็อกไว้โดยค่าเริ่มต้น\n\n` +
-              `วิธีแก้ไขด่วน:\n` +
-              `1. สร้างไฟล์ชื่อ cors.json ในคอมพิวเตอร์ของคุณที่มีข้อมูลดังนี้:\n` +
-              `   [\n` +
-              `     {\n` +
-              `       "origin": ["*"],\n` +
-              `       "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],\n` +
-              `       "maxAgeSeconds": 3600\n` +
-              `     }\n` +
-              `   ]\n` +
-              `2. เปิด Terminal ในคอมพิวเตอร์ของคุณแล้วรันคำสั่งเพื่อตั้งค่า CORS ให้กับ Storage Bucket:\n` +
-              `   gsutil cors set cors.json gs://rational-theater-9tpfc.firebasestorage.app\n\n` +
-              `* หรือเมื่อสลับกลับมารันและใช้งานผ่านเซิร์ฟเวอร์ AI Studio (Cloud Run) จะสามารถอัปโหลดได้ทันทีโดยไม่ต้องตั้งค่าเพิ่มเติมใดๆ!`
-            );
-          } else {
-            throw new Error(`ไม่สามารถอัปโหลดไฟล์ตรงไปยังระบบคลาวด์ได้เนื่องจากข้อผิดพลาด: ${clientStorageErr.message || clientStorageErr}`);
-          }
+          await saveLocalFile(fileId, file);
+          finalPdfUrl = `local-file://${fileId}`;
+        } catch (dbErr) {
+          console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
+          finalPdfUrl = localPdfUrl;
         }
+        setError('หมายเหตุ: การอัปโหลดไปยังระบบคลาวด์ติดขัดเนื่องจากนโยบายเบราว์เซอร์ ระบบได้บันทึกไฟล์แบบ Local เพื่อให้ใช้งานได้ทันทีบนเครื่องนี้!');
       }
 
       setProgress(90);
@@ -252,35 +187,40 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       };
 
       let savedId = '';
-      try {
-        // Fetch the next seq ID from our server API
-        const nextSeqResponse = await fetch(getAbsoluteUrl('/api/ebooks/next-id'));
-        if (!nextSeqResponse.ok) throw new Error('Failed to fetch next sequential book ID');
-        const nextSeqData = await nextSeqResponse.json();
-        const nextSeqId = nextSeqData.nextId;
+      let isLocal = false;
 
-        // Save book to our backend API
-        const saveResponse = await fetch(getAbsoluteUrl('/api/ebooks'), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            id: nextSeqId,
-            ...ebookData,
-          }),
+      try {
+        const nextSeqId = await getNextBookId();
+        await setDoc(doc(db, 'ebooks', nextSeqId), {
+          ...ebookData,
+          createdAt: serverTimestamp()
         });
-        
-        if (!saveResponse.ok) {
-          const errData = await saveResponse.json();
-          throw new Error(errData.error || 'Server error saving ebook');
-        }
-        
         savedId = nextSeqId;
-        console.log('Auto-saved to Database via server API with custom sequential ID:', savedId);
-      } catch (dbErr: any) {
-        console.error('Auto-save via server API failed:', dbErr);
-        throw new Error(`ไม่สามารถบันทึกข้อมูล E-Book ลงฐานข้อมูลได้: ${dbErr.message || dbErr}`);
+        console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
+      } catch (firestoreErr) {
+        console.error('Auto-save to Firestore failed, fallback to local storage:', firestoreErr);
+        isLocal = true;
+
+        try {
+          const localBooksStr = localStorage.getItem('local_ebooks');
+          const localBooks: Ebook[] = localBooksStr ? JSON.parse(localBooksStr) : [];
+          
+          let maxLocalNum = 0;
+          localBooks.forEach((b: Ebook) => {
+            const numPart = b.id.replace('local-', '');
+            if (/^\d+$/.test(numPart)) {
+              const num = parseInt(numPart, 10);
+              if (num > maxLocalNum) maxLocalNum = num;
+            }
+          });
+          savedId = `local-${String(maxLocalNum + 1).padStart(5, '0')}`;
+
+          localBooks.push({ id: savedId, ...ebookData });
+          localStorage.setItem('local_ebooks', JSON.stringify(localBooks));
+        } catch (storageErr) {
+          console.error('Failed to save to localStorage:', storageErr);
+          savedId = `local-${Date.now()}`;
+        }
       }
 
       setMetadataTitle(defaultTitle);
@@ -296,7 +236,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
         coverUrl: coverUrl || undefined,
         totalPages,
         fileSize: formatBytes(file.size),
-        isLocal: false,
+        isLocal,
       });
 
       setProgress(100);
@@ -344,18 +284,11 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           localStorage.setItem('local_ebooks', JSON.stringify(updatedBooks));
         }
       } else {
-        // Update via server API
-        const updateResponse = await fetch(getAbsoluteUrl(`/api/ebooks/${processedBook.id}`), {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(updatedData),
+        // Update in Firestore
+        const bookRef = doc(db, 'ebooks', processedBook.id);
+        await updateDoc(bookRef, {
+          ...updatedData
         });
-        if (!updateResponse.ok) {
-          const errData = await updateResponse.json();
-          throw new Error(errData.error || 'Server error updating ebook');
-        }
       }
 
       setProgress(100);
@@ -660,7 +593,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
             <div className="pt-4 flex items-center justify-center gap-6 text-xs text-slate-400">
               <span>รองรับเฉพาะ .pdf</span>
               <span className="w-1 h-1 bg-slate-300 rounded-full" />
-              <span>ขนาดไฟล์ไม่เกิน 200MB</span>
+              <span>ขนาดไฟล์ไม่เกิน 50MB</span>
             </div>
           </div>
         </div>
@@ -680,7 +613,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           ) : (
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 mt-0.5" />
           )}
-          <div className="text-sm font-medium leading-relaxed whitespace-pre-wrap">
+          <div className="text-sm font-medium leading-relaxed">
             {error}
           </div>
         </div>

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { Ebook } from '../types';
 import BookCoverCard from './BookCoverCard';
 import { BookCopy, Search, Sparkles, Loader2, Filter, Layers } from 'lucide-react';
-import { getAbsoluteUrl } from '../lib/firebase';
 
 interface EbookListProps {
   onOpenBook: (ebook: Ebook) => void;
@@ -16,61 +17,76 @@ export default function EbookList({ onOpenBook }: EbookListProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('ทั้งหมด');
 
-  // Load ebooks from backend API and combine with local storage
-  const fetchEbooks = async () => {
-    try {
-      const response = await fetch(getAbsoluteUrl('/api/ebooks'));
-      if (!response.ok) {
-        throw new Error(`Server returned error status: ${response.status}`);
-      }
-      const serverBooks: Ebook[] = await response.json();
-
-      // Merge local ebooks from localStorage
-      let localBooks: Ebook[] = [];
-      try {
-        const localBooksStr = localStorage.getItem('local_ebooks');
-        if (localBooksStr) {
-          localBooks = JSON.parse(localBooksStr);
-        }
-      } catch (e) {
-        console.error('Error parsing local books:', e);
-      }
-
-      const combined = [...serverBooks];
-      localBooks.forEach((lb) => {
-        if (!combined.some((b) => b.id === lb.id)) {
-          combined.push(lb);
-        }
-      });
-
-      // Sort combined books by uploadedAt desc
-      combined.sort((a, b) => b.uploadedAt - a.uploadedAt);
-      setEbooks(combined);
-    } catch (error) {
-      console.error('Failed to fetch ebooks from backend, falling back to local only:', error);
-      
-      // Fallback to only local ebooks
-      let localBooks: Ebook[] = [];
-      try {
-        const localBooksStr = localStorage.getItem('local_ebooks');
-        if (localBooksStr) {
-          localBooks = JSON.parse(localBooksStr);
-        }
-      } catch (e) {
-        console.error('Error parsing local books:', e);
-      }
-      localBooks.sort((a, b) => b.uploadedAt - a.uploadedAt);
-      setEbooks(localBooks);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Subscribe to real-time updates from Firestore
   useEffect(() => {
-    fetchEbooks();
-    // Poll for changes every 5 seconds to provide simulated real-time updates
-    const interval = setInterval(fetchEbooks, 5000);
-    return () => clearInterval(interval);
+    const ebooksRef = collection(db, 'ebooks');
+    const q = query(ebooksRef, orderBy('uploadedAt', 'desc'));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const books: Ebook[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          books.push({
+            id: doc.id,
+            name: data.name,
+            pdfUrl: data.pdfUrl,
+            coverUrl: data.coverUrl,
+            totalPages: data.totalPages,
+            uploadedAt: data.uploadedAt || Date.now(),
+            status: data.status || 'ready',
+            publishStatus: data.publishStatus || 'published',
+            description: data.description,
+            category: data.category || 'ทั่วไป',
+            fileSize: data.fileSize,
+          });
+        });
+
+        // Merge local ebooks from localStorage
+        let localBooks: Ebook[] = [];
+        try {
+          const localBooksStr = localStorage.getItem('local_ebooks');
+          if (localBooksStr) {
+            localBooks = JSON.parse(localBooksStr);
+          }
+        } catch (e) {
+          console.error('Error parsing local books:', e);
+        }
+
+        const combined = [...books];
+        localBooks.forEach((lb) => {
+          if (!combined.some((b) => b.id === lb.id)) {
+            combined.push(lb);
+          }
+        });
+
+        // Sort combined books by uploadedAt desc
+        combined.sort((a, b) => b.uploadedAt - a.uploadedAt);
+
+        setEbooks(combined);
+        setLoading(false);
+      },
+      (error) => {
+        console.error('Firestore subscription error, fallback to local storage:', error);
+        
+        // Fallback to only local ebooks
+        let localBooks: Ebook[] = [];
+        try {
+          const localBooksStr = localStorage.getItem('local_ebooks');
+          if (localBooksStr) {
+            localBooks = JSON.parse(localBooksStr);
+          }
+        } catch (e) {
+          console.error('Error parsing local books:', e);
+        }
+        localBooks.sort((a, b) => b.uploadedAt - a.uploadedAt);
+        setEbooks(localBooks);
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   // Only display books that are PUBLISHED (non-draft) for public readers

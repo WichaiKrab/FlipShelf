@@ -18,7 +18,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Ebook } from '../types';
-import { storage, getAbsoluteUrl } from '../lib/firebase';
+import { storage } from '../lib/firebase';
 import { ref as storageRef, getBlob } from 'firebase/storage';
 import { getLocalFile } from '../lib/localFileDb';
 
@@ -103,9 +103,8 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
           }
         } else if (isRelative) {
           try {
-            const absoluteUrl = getAbsoluteUrl(ebook.pdfUrl);
-            console.log('Loading PDF from relative server path resolved to absolute:', absoluteUrl);
-            const loadingTask = pdfjsLib.getDocument({ url: absoluteUrl });
+            console.log('Loading PDF from relative server path:', ebook.pdfUrl);
+            const loadingTask = pdfjsLib.getDocument({ url: ebook.pdfUrl });
             pdf = await loadingTask.promise;
           } catch (relativeErr) {
             console.error('Relative PDF load failed:', relativeErr);
@@ -117,7 +116,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
           // Strategy 1: Local Server PDF Proxy (Bypasses CORS entirely on server side)
           try {
             console.log('Strategy 1: Trying local Backend PDF Proxy...');
-            const proxyUrl = getAbsoluteUrl(`/api/pdf-proxy?url=${encodeURIComponent(ebook.pdfUrl)}`);
+            const proxyUrl = `/api/pdf-proxy?url=${encodeURIComponent(ebook.pdfUrl)}`;
             const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
             pdf = await loadingTask.promise;
           } catch (proxyErr) {
