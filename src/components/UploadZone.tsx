@@ -154,16 +154,57 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
 
           xhr.send(formData);
         });
-      } catch (storageErr: any) {
-        console.warn('Backend cloud upload failed, falling back to local storage:', storageErr);
+      } catch (serverUploadErr: any) {
+        console.warn('Backend server-side upload failed, attempting direct client-side Firebase Storage upload:', serverUploadErr);
+        
         try {
-          await saveLocalFile(fileId, file);
-          finalPdfUrl = `local-file://${fileId}`;
-        } catch (dbErr) {
-          console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
-          finalPdfUrl = localPdfUrl;
+          setStatusText('เซิร์ฟเวอร์หลังบ้านติดขัด กำลังอัปโหลดตรงไปยังคลาวด์...');
+          const storageReference = ref(storage, `ebooks/${fileId}.pdf`);
+          const uploadTask = uploadBytesResumable(storageReference, file, {
+            contentType: 'application/pdf',
+          });
+          
+          activeUploadTaskRef.current = uploadTask;
+          setCanSkip(true);
+
+          await new Promise<void>((resolve, reject) => {
+            uploadTask.on(
+              'state_changed',
+              (snapshot) => {
+                const pct = (snapshot.bytesTransferred / snapshot.totalBytes) * 45;
+                setProgress(Math.round(40 + pct));
+                setStatusText(`กำลังอัปโหลดไปยังระบบคลาวด์ตรง: ${Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100)}%`);
+              },
+              (err) => {
+                reject(err);
+              },
+              async () => {
+                try {
+                  const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                  finalPdfUrl = downloadUrl;
+                  resolve();
+                } catch (urlErr) {
+                  reject(urlErr);
+                }
+              }
+            );
+          });
+          setCanSkip(false);
+          activeUploadTaskRef.current = null;
+        } catch (clientStorageErr: any) {
+          console.error('Direct client-side Firebase Storage upload also failed:', clientStorageErr);
+          setCanSkip(false);
+          activeUploadTaskRef.current = null;
+          
+          try {
+            await saveLocalFile(fileId, file);
+            finalPdfUrl = `local-file://${fileId}`;
+          } catch (dbErr) {
+            console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
+            finalPdfUrl = localPdfUrl;
+          }
+          setError('หมายเหตุ: การอัปโหลดไปยังระบบคลาวด์ขัดข้องเนื่องจากขนาดไฟล์หรือเครือข่าย ระบบได้บันทึกไฟล์แบบ Local บนเครื่องนี้! (คุณจะสามารถอ่านได้จากเครื่องนี้เท่านั้น ไม่สามารถแชร์ไปเครื่องอื่นได้)');
         }
-        setError('หมายเหตุ: การอัปโหลดไปยังระบบคลาวด์ติดขัดเนื่องจากนโยบายเบราว์เซอร์ ระบบได้บันทึกไฟล์แบบ Local เพื่อให้ใช้งานได้ทันทีบนเครื่องนี้!');
       }
 
       setProgress(90);
@@ -187,20 +228,24 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       };
 
       let savedId = '';
-      let isLocal = false;
+      let isLocal = finalPdfUrl.startsWith('local-file://') || finalPdfUrl.startsWith('blob:');
 
-      try {
-        const nextSeqId = await getNextBookId();
-        await setDoc(doc(db, 'ebooks', nextSeqId), {
-          ...ebookData,
-          createdAt: serverTimestamp()
-        });
-        savedId = nextSeqId;
-        console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
-      } catch (firestoreErr) {
-        console.error('Auto-save to Firestore failed, fallback to local storage:', firestoreErr);
-        isLocal = true;
+      if (!isLocal) {
+        try {
+          const nextSeqId = await getNextBookId();
+          await setDoc(doc(db, 'ebooks', nextSeqId), {
+            ...ebookData,
+            createdAt: serverTimestamp()
+          });
+          savedId = nextSeqId;
+          console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
+        } catch (firestoreErr) {
+          console.error('Auto-save to Firestore failed, fallback to local storage:', firestoreErr);
+          isLocal = true;
+        }
+      }
 
+      if (isLocal) {
         try {
           const localBooksStr = localStorage.getItem('local_ebooks');
           const localBooks: Ebook[] = localBooksStr ? JSON.parse(localBooksStr) : [];
@@ -215,7 +260,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           });
           savedId = `local-${String(maxLocalNum + 1).padStart(5, '0')}`;
 
-          localBooks.push({ id: savedId, ...ebookData });
+          localBooks.push({ id: savedId, ...ebookData, pdfUrl: finalPdfUrl });
           localStorage.setItem('local_ebooks', JSON.stringify(localBooks));
         } catch (storageErr) {
           console.error('Failed to save to localStorage:', storageErr);

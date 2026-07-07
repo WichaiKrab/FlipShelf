@@ -36,9 +36,14 @@ async function startServer() {
     console.error('[Server] Failed to initialize server-side Firebase Storage:', err);
   }
 
-  // Multer configuration for memory storage uploads
+  const uploadsDir = path.join('/tmp', 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  // Multer configuration for disk-based uploads to save server memory
   const upload = multer({
-    storage: multer.memoryStorage(),
+    dest: uploadsDir,
     limits: {
       fileSize: 200 * 1024 * 1024, // 200MB limit
     }
@@ -74,12 +79,20 @@ async function startServer() {
           console.log(`[Server] Uploading ${req.file.originalname} to Firebase Storage as ebooks/${filename}...`);
           const fileRef = ref(firebaseStorage, `ebooks/${filename}`);
           
-          const uploadResult = await uploadBytes(fileRef, req.file.buffer, {
+          const fileBuffer = fs.readFileSync(req.file.path);
+          const uploadResult = await uploadBytes(fileRef, fileBuffer, {
             contentType: 'application/pdf',
           });
           
           const downloadUrl = await getDownloadURL(uploadResult.ref);
           console.log(`[Server] Firebase upload complete: ${downloadUrl}`);
+          
+          // Clean up the temporary file
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (cleanupErr) {
+            console.warn('[Server] Failed to clean up temporary file:', cleanupErr);
+          }
           
           res.json({
             success: true,
@@ -95,13 +108,15 @@ async function startServer() {
 
       // 2. Fallback to Local Ephemeral Server Storage (/tmp/uploads)
       console.log(`[Server] Saving to local disk fallback (/tmp/uploads/${filename})...`);
-      const uploadsDir = path.join('/tmp', 'uploads');
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
+      const finalLocalPath = path.join(uploadsDir, filename);
+      
+      // Rename the temporary multer file to the final destination name
+      if (req.file.path !== finalLocalPath) {
+        if (fs.existsSync(finalLocalPath)) {
+          fs.unlinkSync(finalLocalPath);
+        }
+        fs.renameSync(req.file.path, finalLocalPath);
       }
-
-      const localPath = path.join(uploadsDir, filename);
-      fs.writeFileSync(localPath, req.file.buffer);
 
       const localUrl = `/api/uploads/${filename}`;
       res.json({
@@ -112,6 +127,12 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[Server] Upload handler error:', err);
+      // Clean up the multer temp file if it exists and wasn't renamed or deleted
+      if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (e) {}
+      }
       res.status(500).json({ error: `Internal Server Error: ${err.message}` });
     }
   });
