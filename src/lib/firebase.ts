@@ -42,4 +42,27 @@ async function getNextBookId(): Promise<string> {
   }
 }
 
-export { app, db, storage, getNextBookId };
+// Resolves relative paths (e.g. /api/uploads/...) to absolute paths pointing to the Cloud Run backend when running on Vercel
+function getAbsoluteUrl(url: string): string {
+  if (!url) return '';
+  if (url.startsWith('local-file://') || url.startsWith('blob:') || url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  // It is a relative URL (e.g. starts with /api/...)
+  const isVercel = typeof window !== 'undefined' && (
+    window.location.hostname.includes('vercel.app') || 
+    (!window.location.hostname.includes('run.app') && 
+     !window.location.hostname.includes('localhost') && 
+     !window.location.hostname.includes('127.0.0.1'))
+  );
+  
+  if (isVercel) {
+    const backendBaseUrl = 'https://ais-pre-nx45id2xlyjdped6jgz26a-246299359506.asia-east1.run.app';
+    return `${backendBaseUrl}${url.startsWith('/') ? '' : '/'}${url}`;
+  }
+  
+  return url;
+}
+
+export { app, db, storage, getNextBookId, getAbsoluteUrl };

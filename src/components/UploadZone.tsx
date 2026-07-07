@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, Image as ImageIcon, Save, ArrowLeft, BookOpen } from 'lucide-react';
 import { collection, setDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage, getNextBookId } from '../lib/firebase';
+import { db, storage, getNextBookId, getAbsoluteUrl } from '../lib/firebase';
 import { Ebook } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 import { saveLocalFile } from '../lib/localFileDb';
@@ -119,7 +119,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
 
         await new Promise<void>((resolve, reject) => {
           const xhr = new XMLHttpRequest();
-          xhr.open('POST', '/api/upload', true);
+          xhr.open('POST', getAbsoluteUrl('/api/upload'), true);
 
           // Track upload progress on progress bar (takes up 45% of the bar)
           xhr.upload.onprogress = (event) => {
@@ -135,7 +135,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
               try {
                 const response = JSON.parse(xhr.responseText);
                 if (response.success && response.url) {
-                  finalPdfUrl = response.url;
+                  finalPdfUrl = getAbsoluteUrl(response.url);
                   resolve();
                 } else {
                   reject(new Error(response.error || 'Server returned upload failure status'));
