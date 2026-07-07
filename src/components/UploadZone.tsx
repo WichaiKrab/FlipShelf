@@ -195,15 +195,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           console.error('Direct client-side Firebase Storage upload also failed:', clientStorageErr);
           setCanSkip(false);
           activeUploadTaskRef.current = null;
-          
-          try {
-            await saveLocalFile(fileId, file);
-            finalPdfUrl = `local-file://${fileId}`;
-          } catch (dbErr) {
-            console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
-            finalPdfUrl = localPdfUrl;
-          }
-          setError('หมายเหตุ: การอัปโหลดไปยังระบบคลาวด์ขัดข้องเนื่องจากขนาดไฟล์หรือเครือข่าย ระบบได้บันทึกไฟล์แบบ Local บนเครื่องนี้! (คุณจะสามารถอ่านได้จากเครื่องนี้เท่านั้น ไม่สามารถแชร์ไปเครื่องอื่นได้)');
+          throw new Error('ไม่สามารถอัปโหลดไฟล์ไปยังระบบคลาวด์ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่อีกครั้ง');
         }
       }
 
@@ -228,44 +220,17 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       };
 
       let savedId = '';
-      let isLocal = finalPdfUrl.startsWith('local-file://') || finalPdfUrl.startsWith('blob:');
-
-      if (!isLocal) {
-        try {
-          const nextSeqId = await getNextBookId();
-          await setDoc(doc(db, 'ebooks', nextSeqId), {
-            ...ebookData,
-            createdAt: serverTimestamp()
-          });
-          savedId = nextSeqId;
-          console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
-        } catch (firestoreErr) {
-          console.error('Auto-save to Firestore failed, fallback to local storage:', firestoreErr);
-          isLocal = true;
-        }
-      }
-
-      if (isLocal) {
-        try {
-          const localBooksStr = localStorage.getItem('local_ebooks');
-          const localBooks: Ebook[] = localBooksStr ? JSON.parse(localBooksStr) : [];
-          
-          let maxLocalNum = 0;
-          localBooks.forEach((b: Ebook) => {
-            const numPart = b.id.replace('local-', '');
-            if (/^\d+$/.test(numPart)) {
-              const num = parseInt(numPart, 10);
-              if (num > maxLocalNum) maxLocalNum = num;
-            }
-          });
-          savedId = `local-${String(maxLocalNum + 1).padStart(5, '0')}`;
-
-          localBooks.push({ id: savedId, ...ebookData, pdfUrl: finalPdfUrl });
-          localStorage.setItem('local_ebooks', JSON.stringify(localBooks));
-        } catch (storageErr) {
-          console.error('Failed to save to localStorage:', storageErr);
-          savedId = `local-${Date.now()}`;
-        }
+      try {
+        const nextSeqId = await getNextBookId();
+        await setDoc(doc(db, 'ebooks', nextSeqId), {
+          ...ebookData,
+          createdAt: serverTimestamp()
+        });
+        savedId = nextSeqId;
+        console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
+      } catch (firestoreErr: any) {
+        console.error('Auto-save to Firestore failed:', firestoreErr);
+        throw new Error(`ไม่สามารถบันทึกข้อมูล E-Book ลงฐานข้อมูลคลาวด์ได้: ${firestoreErr.message || firestoreErr}`);
       }
 
       setMetadataTitle(defaultTitle);
@@ -281,7 +246,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
         coverUrl: coverUrl || undefined,
         totalPages,
         fileSize: formatBytes(file.size),
-        isLocal,
+        isLocal: false,
       });
 
       setProgress(100);
