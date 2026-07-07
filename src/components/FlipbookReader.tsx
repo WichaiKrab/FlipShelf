@@ -491,7 +491,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                 <button
                   onClick={handlePrev}
                   disabled={currentPage <= 1}
-                  className="absolute -left-20 top-1/2 -translate-y-1/2 p-4 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-30 disabled:pointer-events-none rounded-full shadow-lg border border-slate-200/60 transition-all hover:scale-110 active:scale-95 group"
+                  className="absolute left-4 sm:left-6 md:left-8 top-1/2 -translate-y-1/2 z-30 p-4 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-30 disabled:pointer-events-none rounded-full shadow-lg border border-slate-200/60 transition-all hover:scale-110 active:scale-95 group"
                   id="prev-page-button-stage"
                 >
                   <ChevronLeft className="w-6 h-6 group-hover:-translate-x-0.5 transition-transform" />
@@ -499,7 +499,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                 <button
                   onClick={handleNext}
                   disabled={currentPage >= totalPages || (currentPage % 2 === 0 && currentPage + 1 >= totalPages)}
-                  className="absolute -right-20 top-1/2 -translate-y-1/2 p-4 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-30 disabled:pointer-events-none rounded-full shadow-lg border border-slate-200/60 transition-all hover:scale-110 active:scale-95 group"
+                  className="absolute right-4 sm:right-6 md:right-8 top-1/2 -translate-y-1/2 z-30 p-4 bg-white hover:bg-slate-50 text-slate-700 disabled:opacity-30 disabled:pointer-events-none rounded-full shadow-lg border border-slate-200/60 transition-all hover:scale-110 active:scale-95 group"
                   id="next-page-button-stage"
                 >
                   <ChevronRight className="w-6 h-6 group-hover:translate-x-0.5 transition-transform" />
