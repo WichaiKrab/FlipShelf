@@ -195,7 +195,35 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           console.error('Direct client-side Firebase Storage upload also failed:', clientStorageErr);
           setCanSkip(false);
           activeUploadTaskRef.current = null;
-          throw new Error('ไม่สามารถอัปโหลดไฟล์ไปยังระบบคลาวด์ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตหรือลองใหม่อีกครั้ง');
+          
+          const isCorsError = clientStorageErr?.message?.includes('CORS') || 
+                              clientStorageErr?.code?.includes('storage/unknown') || 
+                              clientStorageErr?.code?.includes('storage/retry-limit-exceeded') ||
+                              String(clientStorageErr).includes('CORS') ||
+                              String(clientStorageErr).includes('Network Error') ||
+                              String(clientStorageErr).includes('ERR_FAILED');
+
+          if (isCorsError) {
+            throw new Error(
+              `ล้มเหลวเนื่องจาก 'ข้อจำกัดนโยบายความปลอดภัย CORS' ของ Firebase Storage\n\n` +
+              `เมื่อแอปพลิเคชันรันบนสภาวะแวดล้อมภายนอก (เช่น Vercel หรือ Netlify) ที่ไม่มีเซิร์ฟเวอร์หลังบ้าน (Backend) คอยช่วยทำ Proxy\n` +
+              `ระบบจำเป็นต้องอัปโหลดขึ้นคลาวด์ตรงผ่านเบราว์เซอร์ ซึ่ง Firebase Storage บล็อกไว้โดยค่าเริ่มต้น\n\n` +
+              `วิธีแก้ไขด่วน:\n` +
+              `1. สร้างไฟล์ชื่อ cors.json ในคอมพิวเตอร์ของคุณที่มีข้อมูลดังนี้:\n` +
+              `   [\n` +
+              `     {\n` +
+              `       "origin": ["*"],\n` +
+              `       "method": ["GET", "POST", "PUT", "DELETE", "HEAD"],\n` +
+              `       "maxAgeSeconds": 3600\n` +
+              `     }\n` +
+              `   ]\n` +
+              `2. เปิด Terminal ในคอมพิวเตอร์ของคุณแล้วรันคำสั่งเพื่อตั้งค่า CORS ให้กับ Storage Bucket:\n` +
+              `   gsutil cors set cors.json gs://rational-theater-9tpfc.firebasestorage.app\n\n` +
+              `* หรือเมื่อสลับกลับมารันและใช้งานผ่านเซิร์ฟเวอร์ AI Studio (Cloud Run) จะสามารถอัปโหลดได้ทันทีโดยไม่ต้องตั้งค่าเพิ่มเติมใดๆ!`
+            );
+          } else {
+            throw new Error(`ไม่สามารถอัปโหลดไฟล์ตรงไปยังระบบคลาวด์ได้เนื่องจากข้อผิดพลาด: ${clientStorageErr.message || clientStorageErr}`);
+          }
         }
       }
 
@@ -623,7 +651,7 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
           ) : (
             <AlertCircle className="w-5 h-5 shrink-0 text-rose-600 mt-0.5" />
           )}
-          <div className="text-sm font-medium leading-relaxed">
+          <div className="text-sm font-medium leading-relaxed whitespace-pre-wrap">
             {error}
           </div>
         </div>
