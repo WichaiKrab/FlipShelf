@@ -1,15 +1,102 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BookOpen, Sparkles, AlertCircle, Bookmark, ShieldAlert, Library, User } from 'lucide-react';
 import EbookList from './components/EbookList';
 import FlipbookReader from './components/FlipbookReader';
 import AdminDashboard from './components/AdminDashboard';
 import { Ebook } from './types';
+import { db } from './lib/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 type PortalMode = 'public' | 'admin';
 
 export default function App() {
   const [portalMode, setPortalMode] = useState<PortalMode>('public');
   const [activeBook, setActiveBook] = useState<Ebook | null>(null);
+
+  // Sync URL "?book=id" query param on initial load & popstate back/forward navigation
+  useEffect(() => {
+    const handleUrlChange = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const bookId = params.get('book');
+      
+      if (!bookId) {
+        setActiveBook(null);
+        return;
+      }
+
+      // If activeBook matches bookId, do nothing to prevent loops
+      if (activeBook && activeBook.id === bookId) {
+        return;
+      }
+
+      // 1. Try resolving from localStorage (Local Session Uploads)
+      try {
+        const localBooksStr = localStorage.getItem('local_ebooks');
+        if (localBooksStr) {
+          const localBooks: Ebook[] = JSON.parse(localBooksStr);
+          const found = localBooks.find(b => b.id === bookId);
+          if (found) {
+            setActiveBook(found);
+            return;
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing local books from localStorage:', e);
+      }
+
+      // 2. Resolve from Firestore (Cloud Shared Uploads)
+      try {
+        const docRef = doc(db, 'ebooks', bookId);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const book: Ebook = {
+            id: docSnap.id,
+            name: data.name,
+            pdfUrl: data.pdfUrl,
+            coverUrl: data.coverUrl,
+            totalPages: data.totalPages,
+            uploadedAt: data.uploadedAt || Date.now(),
+            status: data.status || 'ready',
+            publishStatus: data.publishStatus || 'published',
+            description: data.description,
+            category: data.category || 'ทั่วไป',
+            fileSize: data.fileSize,
+          };
+          setActiveBook(book);
+        } else {
+          console.warn('Book not found in Firestore for id:', bookId);
+          // Auto-clean url param if not found so they aren't stuck
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      } catch (err) {
+        console.error('Failed to deep link to book ID from cloud:', err);
+      }
+    };
+
+    handleUrlChange();
+
+    window.addEventListener('popstate', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+    };
+  }, [activeBook]);
+
+  // Sync state changes to URL query param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const currentBookId = params.get('book');
+
+    if (activeBook) {
+      if (currentBookId !== activeBook.id) {
+        window.history.pushState({}, '', `?book=${activeBook.id}`);
+      }
+    } else {
+      if (currentBookId) {
+        window.history.pushState({}, '', window.location.pathname);
+      }
+    }
+  }, [activeBook]);
 
   return (
     <div className="min-h-screen bg-[#FAF8F5] text-slate-800 flex flex-col font-sans" id="root-app-layout">

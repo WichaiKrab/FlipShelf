@@ -5,6 +5,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { Ebook } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
+import { saveLocalFile } from '../lib/localFileDb';
 
 // Set worker source using unpkg CDN matching package version
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@6.1.200/build/pdf.worker.min.mjs';
@@ -118,12 +119,12 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
         setCanSkip(true);
         
         await new Promise<void>((resolve, reject) => {
-          // Set an 8-second automatic timeout
+          // Set a 120-second automatic timeout (generous for larger PDFs)
           const timeoutId = setTimeout(() => {
-            console.warn('Firebase Storage upload timed out after 8 seconds. Cancelling upload task...');
+            console.warn('Firebase Storage upload timed out after 120 seconds. Cancelling upload task...');
             uploadTask.cancel();
             reject(new Error('การเชื่อมต่อกับ Firebase Storage หมดเวลา กำลังสลับไปใช้ Local Session เพื่อความรวดเร็ว'));
-          }, 8000);
+          }, 120000);
 
           uploadTask.on(
             'state_changed',
@@ -150,10 +151,16 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
         });
       } catch (storageErr: any) {
         console.warn('Falling back to local session URL due to Firebase Storage constraints:', storageErr);
-        finalPdfUrl = localPdfUrl;
+        try {
+          await saveLocalFile(fileId, file);
+          finalPdfUrl = `local-file://${fileId}`;
+        } catch (dbErr) {
+          console.error('Failed to save to IndexedDB, falling back to blob URL:', dbErr);
+          finalPdfUrl = localPdfUrl;
+        }
         setError(storageErr?.message?.includes('หมดเวลา') 
-          ? 'หมายเหตุ: อัปโหลดล่าช้า ระบบทำการเชื่อมต่อแบบ Local Session ให้คุณเข้าอ่านได้ทันที!' 
-          : 'หมายเหตุ: เปิดใช้ Local Session เพื่อให้คุณใช้งานและเปิดอ่านได้ทันที!');
+          ? 'หมายเหตุ: อัปโหลดล่าช้า ระบบทำการบันทึกแบบ Local ให้คุณเข้าอ่านได้ทันทีบนเบราว์เซอร์นี้!' 
+          : 'หมายเหตุ: ระบบสลับไปบันทึกแบบ Local ให้คุณเข้าอ่านได้ทันทีบนเบราว์เซอร์นี้!');
       } finally {
         activeUploadTaskRef.current = null;
         setCanSkip(false);

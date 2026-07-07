@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, Calendar, Trash2, FileText } from 'lucide-react';
+import { BookOpen, Calendar, Trash2, FileText, Share2, Check } from 'lucide-react';
 import { Ebook } from '../types';
 
 interface BookCoverCardProps {
@@ -10,11 +10,24 @@ interface BookCoverCardProps {
 }
 
 export default function BookCoverCard({ ebook, onOpen, onDelete }: BookCoverCardProps) {
+  const [copied, setCopied] = React.useState(false);
+
   const formattedDate = new Date(ebook.uploadedAt).toLocaleDateString('th-TH', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
   });
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the book when clicking share
+    const shareUrl = `${window.location.origin}${window.location.pathname}?book=${ebook.id}`;
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch((err) => {
+      console.error('Failed to copy link:', err);
+    });
+  };
 
   return (
     <div 
@@ -90,16 +103,38 @@ export default function BookCoverCard({ ebook, onOpen, onDelete }: BookCoverCard
             <span>{formattedDate}</span>
           </div>
 
-          {onDelete && (
+          <div className="flex items-center gap-1">
             <button
-              onClick={() => onDelete(ebook.id)}
-              className="p-1.5 hover:bg-rose-50 hover:text-rose-600 rounded-lg text-slate-400 transition-all active:scale-90"
-              title="ลบหนังสือ"
-              id={`delete-book-btn-${ebook.id}`}
+              onClick={handleShare}
+              className={`p-1.5 rounded-lg transition-all active:scale-90 flex items-center gap-1 ${
+                copied 
+                  ? 'bg-emerald-50 text-emerald-700 font-semibold' 
+                  : 'hover:bg-slate-100 text-slate-400 hover:text-slate-700'
+              }`}
+              title="คัดลอกลิงก์แชร์"
+              id={`share-book-btn-${ebook.id}`}
             >
-              <Trash2 className="w-4 h-4" />
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-[10px] text-emerald-700 font-bold">คัดลอกแล้ว</span>
+                </>
+              ) : (
+                <Share2 className="w-3.5 h-3.5" />
+              )}
             </button>
-          )}
+
+            {onDelete && (
+              <button
+                onClick={() => onDelete(ebook.id)}
+                className="p-1.5 hover:bg-rose-50 hover:text-rose-600 rounded-lg text-slate-400 transition-all active:scale-90"
+                title="ลบหนังสือ"
+                id={`delete-book-btn-${ebook.id}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

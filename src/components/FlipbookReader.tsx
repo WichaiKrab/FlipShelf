@@ -11,13 +11,16 @@ import {
   Loader2, 
   ChevronFirst, 
   ChevronLast, 
-  AlertTriangle 
+  AlertTriangle,
+  Share2,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Ebook } from '../types';
 import { storage } from '../lib/firebase';
 import { ref as storageRef, getBlob } from 'firebase/storage';
+import { getLocalFile } from '../lib/localFileDb';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@6.1.200/build/pdf.worker.min.mjs';
 
@@ -31,6 +34,17 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const handleShare = () => {
+    const shareUrl = `${window.location.origin}${window.location.pathname}?book=${ebook.id}`;
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch((err) => {
+      console.error('Failed to copy link:', err);
+    });
+  };
   
   // Navigation states
   const [currentPage, setCurrentPage] = useState(1); // 1-indexed
@@ -68,9 +82,26 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
     const loadPDF = async () => {
       try {
         let pdf;
-        const isFirebaseStorage = ebook.pdfUrl.includes('firebasestorage.googleapis.com') || ebook.pdfUrl.startsWith('gs://');
+        const isLocalFile = ebook.pdfUrl.startsWith('local-file://');
+        const isFirebaseStorage = !isLocalFile && (ebook.pdfUrl.includes('firebasestorage.googleapis.com') || ebook.pdfUrl.startsWith('gs://'));
 
-        if (isFirebaseStorage) {
+        if (isLocalFile) {
+          try {
+            console.log('Loading PDF from IndexedDB...');
+            const fileId = ebook.pdfUrl.replace('local-file://', '');
+            const blob = await getLocalFile(fileId);
+            if (!blob) {
+              throw new Error('ไม่พบไฟล์ PDF ในเครื่องนี้ (IndexedDB) เนื่องจากเอกสารถูกบันทึกแบบ Local\n\nหากต้องการให้อ่านได้จากเครื่องอื่นๆ กรุณาใช้เครื่องเดิมที่อัปโหลดทำการลบและแชร์ผ่านคลาวด์อีกครั้ง');
+            }
+            const arrayBuffer = await blob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+            const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
+            pdf = await loadingTask.promise;
+          } catch (dbErr: any) {
+            console.error('IndexedDB load failed:', dbErr);
+            throw dbErr;
+          }
+        } else if (isFirebaseStorage) {
           try {
             console.log('Loading PDF from Firebase Storage via SDK getBlob...');
             const fileRef = storageRef(storage, ebook.pdfUrl);
@@ -84,29 +115,37 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
           }
         }
 
-        if (!pdf) {
+        if (!pdf && !isLocalFile) {
           try {
             // Attempt 1: Direct load
             const loadingTask = pdfjsLib.getDocument({ url: ebook.pdfUrl });
             pdf = await loadingTask.promise;
           } catch (directErr) {
-            console.warn('Direct PDF load failed, trying CORS proxy 1 (corsproxy.io):', directErr);
+            console.warn('Direct PDF load failed, trying local Backend PDF Proxy:', directErr);
             if (ebook.pdfUrl.startsWith('http')) {
               try {
-                // Attempt 2: CORS proxy 1 (corsproxy.io)
-                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(ebook.pdfUrl)}`;
+                // Attempt 2: Local Server PDF Proxy (100% reliable backend streaming)
+                const proxyUrl = `/api/pdf-proxy?url=${encodeURIComponent(ebook.pdfUrl)}`;
                 const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
                 pdf = await loadingTask.promise;
-              } catch (proxy1Err) {
-                console.warn('CORS proxy 1 failed, trying CORS proxy 2 (allorigins):', proxy1Err);
+              } catch (localProxyErr) {
+                console.warn('Local Server PDF Proxy failed, trying CORS proxy 1 (corsproxy.io):', localProxyErr);
                 try {
-                  // Attempt 3: CORS proxy 2 (allorigins)
-                  const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(ebook.pdfUrl)}`;
+                  // Attempt 3: CORS proxy 1 (corsproxy.io)
+                  const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(ebook.pdfUrl)}`;
                   const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
                   pdf = await loadingTask.promise;
-                } catch (proxy2Err) {
-                  console.error('All PDF loading strategies failed:', proxy2Err);
-                  throw proxy2Err;
+                } catch (proxy1Err) {
+                  console.warn('CORS proxy 1 failed, trying CORS proxy 2 (allorigins):', proxy1Err);
+                  try {
+                    // Attempt 4: CORS proxy 2 (allorigins)
+                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(ebook.pdfUrl)}`;
+                    const loadingTask = pdfjsLib.getDocument({ url: proxyUrl });
+                    pdf = await loadingTask.promise;
+                  } catch (proxy2Err) {
+                    console.error('All PDF loading strategies failed:', proxy2Err);
+                    throw proxy2Err;
+                  }
                 }
               }
             } else {
@@ -122,7 +161,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
       } catch (err: any) {
         console.error('Error rendering PDF:', err);
         if (active) {
-          setError('ไม่สามารถเปิดไฟล์เอกสารนี้ได้ เนื่องจากไฟล์ชำรุดหรือลิงก์เข้าถึงไม่ถูกต้อง');
+          setError(err.message || 'ไม่สามารถเปิดไฟล์เอกสารนี้ได้ เนื่องจากไฟล์ชำรุดหรือลิงก์เข้าถึงไม่ถูกต้อง');
           setLoading(false);
         }
       }
@@ -294,13 +333,37 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
           </div>
         </div>
         
-        <button
-          onClick={onClose}
-          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all hover:scale-102 active:scale-98"
-          id="close-reader-button"
-        >
-          กลับหน้าหลัก
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleShare}
+            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-1.5 transition-all ${
+              copied 
+                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                : 'bg-white hover:bg-slate-50 border border-slate-200 text-slate-700'
+            }`}
+            id="share-reader-button"
+          >
+            {copied ? (
+              <>
+                <Check className="w-4 h-4 text-emerald-600 animate-scale-up" />
+                <span>คัดลอกแล้ว!</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-4 h-4" />
+                <span>แชร์หนังสือ</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs sm:text-sm font-semibold transition-all hover:scale-102 active:scale-98"
+            id="close-reader-button"
+          >
+            กลับหน้าหลัก
+          </button>
+        </div>
       </header>
 
       {/* Main Workspace Stage */}
