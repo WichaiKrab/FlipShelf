@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, Image as ImageIcon, Save, ArrowLeft, BookOpen } from 'lucide-react';
-import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, setDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
+import { db, storage, getNextBookId } from '../lib/firebase';
 import { Ebook } from '../types';
 import * as pdfjsLib from 'pdfjs-dist';
 import { saveLocalFile } from '../lib/localFileDb';
@@ -190,24 +190,36 @@ export default function UploadZone({ onUploadSuccess }: UploadZoneProps) {
       let isLocal = false;
 
       try {
-        const docRef = await addDoc(collection(db, 'ebooks'), {
+        const nextSeqId = await getNextBookId();
+        await setDoc(doc(db, 'ebooks', nextSeqId), {
           ...ebookData,
           createdAt: serverTimestamp()
         });
-        savedId = docRef.id;
-        console.log('Auto-saved to Firestore:', savedId);
+        savedId = nextSeqId;
+        console.log('Auto-saved to Firestore with custom sequential ID:', savedId);
       } catch (firestoreErr) {
         console.error('Auto-save to Firestore failed, fallback to local storage:', firestoreErr);
-        savedId = `local-${Date.now()}`;
         isLocal = true;
 
         try {
           const localBooksStr = localStorage.getItem('local_ebooks');
           const localBooks: Ebook[] = localBooksStr ? JSON.parse(localBooksStr) : [];
+          
+          let maxLocalNum = 0;
+          localBooks.forEach((b: Ebook) => {
+            const numPart = b.id.replace('local-', '');
+            if (/^\d+$/.test(numPart)) {
+              const num = parseInt(numPart, 10);
+              if (num > maxLocalNum) maxLocalNum = num;
+            }
+          });
+          savedId = `local-${String(maxLocalNum + 1).padStart(5, '0')}`;
+
           localBooks.push({ id: savedId, ...ebookData });
           localStorage.setItem('local_ebooks', JSON.stringify(localBooks));
         } catch (storageErr) {
           console.error('Failed to save to localStorage:', storageErr);
+          savedId = `local-${Date.now()}`;
         }
       }
 

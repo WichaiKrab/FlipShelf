@@ -442,6 +442,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                           {/* Inner page container */}
                           <div className="flex-1 flex items-center justify-center overflow-hidden">
                             <PageCanvas 
+                              key={leftPageNum}
                               pdfDoc={pdfDoc} 
                               pageNumber={leftPageNum} 
                             />
@@ -469,6 +470,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
                         {/* Inner page container */}
                         <div className="flex-1 flex items-center justify-center overflow-hidden">
                           <PageCanvas 
+                            key={rightPageNum}
                             pdfDoc={pdfDoc} 
                             pageNumber={rightPageNum} 
                           />
@@ -615,6 +617,7 @@ export default function FlipbookReader({ ebook, onClose, isAdminMode }: Flipbook
 
 /* Individual Page Canvas Component with optimization */
 interface PageCanvasProps {
+  key?: any;
   pdfDoc: any;
   pageNumber: number;
 }
@@ -692,11 +695,9 @@ function PageCanvas({ pdfDoc, pageNumber }: PageCanvasProps) {
 
   return (
     <div className="relative w-full h-full flex items-center justify-center overflow-hidden p-1 select-none">
-      {rendering && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-sm">
-          <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-        </div>
-      )}
+      <div className={`absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-sm transition-opacity duration-200 ${rendering ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+      </div>
       <canvas 
         ref={canvasRef} 
         className="max-w-full max-h-full object-contain rounded shadow-sm border border-slate-100"

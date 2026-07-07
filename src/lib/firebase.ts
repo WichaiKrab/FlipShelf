@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, collection, getDocs } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -20,4 +20,26 @@ const db = getFirestore(app, "ai-studio-ebookpdfflipbook-8b20b24a-baf8-4c50-a092
 // Initialize Storage
 const storage = getStorage(app);
 
-export { app, db, storage };
+// Helper to get next sequential 5-digit book ID starting from 00001
+async function getNextBookId(): Promise<string> {
+  try {
+    const querySnapshot = await getDocs(collection(db, 'ebooks'));
+    let maxNum = 0;
+    querySnapshot.forEach((doc) => {
+      const id = doc.id;
+      if (/^\d{5}$/.test(id)) {
+        const num = parseInt(id, 10);
+        if (num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+    const nextNum = maxNum + 1;
+    return String(nextNum).padStart(5, '0');
+  } catch (err) {
+    console.error('Error getting next book ID, using fallback 00001:', err);
+    return '00001';
+  }
+}
+
+export { app, db, storage, getNextBookId };

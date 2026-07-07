@@ -22,8 +22,8 @@ import {
   X,
   Sparkles
 } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { db, getNextBookId } from '../lib/firebase';
 import { Ebook } from '../types';
 import UploadZone from './UploadZone';
 
@@ -332,19 +332,30 @@ export default function AdminDashboard({ onOpenBook }: AdminDashboardProps) {
       let isLocal = false;
 
       try {
-        const { collection, addDoc, serverTimestamp } = await import('firebase/firestore');
-        const docRef = await addDoc(collection(db, 'ebooks'), {
+        const { serverTimestamp } = await import('firebase/firestore');
+        const nextSeqId = await getNextBookId();
+        await setDoc(doc(db, 'ebooks', nextSeqId), {
           ...ebookData,
           createdAt: serverTimestamp()
         });
-        savedId = docRef.id;
+        savedId = nextSeqId;
       } catch (firestoreErr) {
         console.error('Firestore manual create error, fallback to local:', firestoreErr);
-        savedId = `local-${Date.now()}`;
         isLocal = true;
 
         const localBooksStr = localStorage.getItem('local_ebooks');
         const localBooks = localBooksStr ? JSON.parse(localBooksStr) : [];
+        
+        let maxLocalNum = 0;
+        localBooks.forEach((b: Ebook) => {
+          const numPart = b.id.replace('local-', '');
+          if (/^\d+$/.test(numPart)) {
+            const num = parseInt(numPart, 10);
+            if (num > maxLocalNum) maxLocalNum = num;
+          }
+        });
+        savedId = `local-${String(maxLocalNum + 1).padStart(5, '0')}`;
+
         localBooks.push({ id: savedId, ...ebookData });
         localStorage.setItem('local_ebooks', JSON.stringify(localBooks));
       }
