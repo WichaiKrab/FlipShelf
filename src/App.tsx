@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BookOpen, Sparkles, AlertCircle, Bookmark, ShieldAlert, Library, User } from 'lucide-react';
 import EbookList from './components/EbookList';
 import FlipbookReader from './components/FlipbookReader';
@@ -13,6 +13,12 @@ export default function App() {
   const [portalMode, setPortalMode] = useState<PortalMode>('public');
   const [activeBook, setActiveBook] = useState<Ebook | null>(null);
 
+  // Keep a ref of activeBook to read inside the event listener without dependency tracking
+  const activeBookRef = useRef<Ebook | null>(null);
+  useEffect(() => {
+    activeBookRef.current = activeBook;
+  }, [activeBook]);
+
   // Sync URL "?book=id" query param on initial load & popstate back/forward navigation
   useEffect(() => {
     const handleUrlChange = async () => {
@@ -20,12 +26,14 @@ export default function App() {
       const bookId = params.get('book');
       
       if (!bookId) {
-        setActiveBook(null);
+        if (activeBookRef.current) {
+          setActiveBook(null);
+        }
         return;
       }
 
       // If activeBook matches bookId, do nothing to prevent loops
-      if (activeBook && activeBook.id === bookId) {
+      if (activeBookRef.current && activeBookRef.current.id === bookId) {
         return;
       }
 
@@ -80,7 +88,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', handleUrlChange);
     };
-  }, [activeBook]);
+  }, []);
 
   // Sync state changes to URL query param
   useEffect(() => {
