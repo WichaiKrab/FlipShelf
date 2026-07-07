@@ -1,0 +1,6 @@
+{
+  "name": "E-Book PDF Flipbook",
+  "description": "แปลงไฟล์ PDF ของคุณให้กลายเป็น E-Book สามมิติพลิกหน้าได้ (Flipbook) แบบสมจริงและเรนเดอร์เรียลไทม์",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

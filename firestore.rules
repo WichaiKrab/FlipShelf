@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // E-Books Collection
+    match /ebooks/{ebookId} {
+      // Public read access for visitors to browse and read ebooks
+      allow read: if true;
+      
+      // Anyone can write if the document is formatted and structured correctly
+      allow create, update: if isValidEbook(request.resource.data);
+      
+      // Delete access for administrative operations
+      allow delete: if true;
+    }
+
+    // Schema Validation Helper
+    function isValidEbook(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 256
+        && data.pdfUrl is string && data.pdfUrl.size() > 0 && data.pdfUrl.size() <= 2048
+        && data.totalPages is int && data.totalPages >= 0
+        && data.uploadedAt is int;
+    }
+  }
+}

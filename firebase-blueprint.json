@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "Ebook": {
+      "title": "E-Book Document",
+      "description": "Metadata for uploaded E-Book and PDF",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Title of the E-Book" },
+        "pdfUrl": { "type": "string", "description": "Download URL or local blob URL of the PDF" },
+        "coverUrl": { "type": "string", "description": "Data URL or download URL of the first page cover image" },
+        "totalPages": { "type": "integer", "description": "Total pages in the PDF document" },
+        "uploadedAt": { "type": "integer", "description": "Timestamp when the E-Book was uploaded" },
+        "status": { "type": "string", "enum": ["ready", "error"], "description": "Processing status of the PDF" },
+        "publishStatus": { "type": "string", "enum": ["published", "draft"], "description": "Visibility of the book" },
+        "description": { "type": "string", "description": "Brief synopsis or description of the book" },
+        "category": { "type": "string", "description": "Book category (e.g. นิยาย, คู่มือ, การศึกษา, นิตยสาร, การ์ตูน, ทั่วไป)" },
+        "fileSize": { "type": "string", "description": "Formatted file size string" }
+      },
+      "required": ["name", "pdfUrl", "totalPages", "uploadedAt"]
+    }
+  },
+  "firestore": {
+    "ebooks/{ebookId}": {
+      "schema": "Ebook",
+      "description": "Collection of all E-Books uploaded to the library"
+    }
+  }
+}
